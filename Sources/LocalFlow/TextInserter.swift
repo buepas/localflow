@@ -17,11 +17,20 @@ enum TextInserter {
     }
 
     static func insert(_ text: String) throws {
+        // Bevorzugt: direkt ins fokussierte Element schreiben (Accessibility-API).
+        // Braucht keine simulierten Tastendrücke und funktioniert daher auch,
+        // während irgendeine App Secure Input hält.
+        if insertViaAccessibility(text) {
+            FlowLog.log("Eingefügt via Accessibility-API.")
+            return
+        }
+
         let pasteboard = NSPasteboard.general
 
-        // Secure Input (z. B. fokussiertes Passwortfeld, Terminal mit "Secure
-        // Keyboard Entry") verwirft simulierte Tastendrücke systemweit. Dann
-        // lassen wir den Text in der Zwischenablage statt stumm zu scheitern.
+        // Fallback ⌘V: Secure Input (Passwortfeld, Terminal mit "Secure
+        // Keyboard Entry", offene Systemeinstellungen …) verwirft simulierte
+        // Tastendrücke systemweit. Dann lassen wir den Text in der
+        // Zwischenablage statt stumm zu scheitern.
         guard !IsSecureEventInputEnabled() else {
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
@@ -35,6 +44,7 @@ enum TextInserter {
         pasteboard.setString(text, forType: .string)
 
         postCommandV()
+        FlowLog.log("Eingefügt via ⌘V-Fallback.")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             if let previous {
@@ -42,6 +52,31 @@ enum TextInserter {
                 pasteboard.setString(previous, forType: .string)
             }
         }
+    }
+
+    /// Schreibt den Text als Ersatz der aktuellen Auswahl direkt ins
+    /// systemweit fokussierte UI-Element. Liefert false, wenn die Ziel-App
+    /// das nicht unterstützt — dann greift der ⌘V-Fallback.
+    private static func insertViaAccessibility(_ text: String) -> Bool {
+        var focused: CFTypeRef?
+        let systemWide = AXUIElementCreateSystemWide()
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            return false
+        }
+        let element = unsafeDowncast(focused as AnyObject, to: AXUIElement.self)
+
+        // Niemals in Passwortfelder diktieren.
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+        if (role as? String) == "AXSecureTextField" { return false }
+
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success,
+              settable.boolValue else {
+            return false
+        }
+        return AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success
     }
 
     /// Ermittelt die App, die Secure Input hält (via IORegistry).
