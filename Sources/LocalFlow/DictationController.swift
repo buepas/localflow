@@ -76,7 +76,8 @@ final class DictationController {
                 // Watchdog: keine Session darf die App dauerhaft blockieren.
                 var text = try await withTimeout(seconds: 60) { try await session.finish() }
                 text = await Self.applyCleanup(to: text, context: context)
-                TextInserter.insert(text)
+                FlowLog.log("Transkript (\(text.count) Zeichen): \(text.prefix(120))")
+                try TextInserter.insert(text)
                 self?.state = .idle
             } catch {
                 NSSound(named: "Basso")?.play()
