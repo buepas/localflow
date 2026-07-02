@@ -38,7 +38,7 @@ final class HudController {
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 56),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 72),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -107,14 +107,15 @@ struct HudView: View {
                     .foregroundStyle(.yellow)
                 Text(message)
                     .foregroundStyle(.white)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .frame(maxWidth: 360)
             }
         }
         .font(.system(size: 13, weight: .medium))
         .padding(.horizontal, 18)
-        .frame(height: 40)
-        .background(Capsule().fill(Color.black.opacity(0.82)))
+        .frame(minHeight: 40)
+        .background(RoundedRectangle(cornerRadius: 20).fill(Color.black.opacity(0.82)))
         .animation(.easeOut(duration: 0.08), value: model.levels)
-        .frame(width: 320, height: 56)
+        .frame(width: 420, height: 72)
     }
 }

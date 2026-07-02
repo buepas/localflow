@@ -1,9 +1,15 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("engine") private var engine = EngineKind.local.rawValue
     @AppStorage("hotkey") private var hotkey = HotkeyKind.fn.rawValue
+    @AppStorage("micDeviceUID") private var micDeviceUID = ""
+
+    private let inputDevices: [(name: String, uid: String)] = AVCaptureDevice.DiscoverySession(
+        deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified
+    ).devices.map { ($0.localizedName, $0.uniqueID) }
     @AppStorage("language") private var language = ""
     @AppStorage("dictionary") private var dictionary = ""
     @AppStorage("userFirstName") private var firstName = ""
@@ -28,6 +34,13 @@ struct SettingsView: View {
                         Text(kind.displayName).tag(kind.rawValue)
                     }
                 }
+                Picker("Mikrofon", selection: $micDeviceUID) {
+                    Text("Automatisch (integriertes Mikrofon)").tag("")
+                    ForEach(inputDevices, id: \.uid) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                }
+                .help("Bluetooth-Mikros (AirPods) brauchen 1–2 s Anlaufzeit — der Anfang des Diktats geht dabei verloren. Empfohlen: Automatisch oder ein kabelgebundenes Mikrofon.")
                 TextField("Sprache (ISO-Code, leer = Auto)", text: $language)
                     .help("z. B. de oder en — leer lassen für automatische Erkennung")
             }

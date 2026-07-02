@@ -45,6 +45,14 @@ struct AppSettings {
         set { defaults.set(newValue.rawValue, forKey: "hotkey") }
     }
 
+    /// UID des Aufnahmegeräts; leer = automatisch (integriertes Mikrofon
+    /// bevorzugt — Bluetooth-Mikros brauchen 1–2 s Anlaufzeit, in der der
+    /// Diktat-Anfang verloren geht).
+    static var micDeviceUID: String {
+        get { defaults.string(forKey: "micDeviceUID") ?? "" }
+        set { defaults.set(newValue, forKey: "micDeviceUID") }
+    }
+
     /// ISO-639-1-Code, leer = automatische Erkennung.
     static var language: String {
         get { defaults.string(forKey: "language") ?? "" }
