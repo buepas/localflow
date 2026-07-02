@@ -7,6 +7,8 @@ final class DictationController {
         case idle
         case recording
         case transcribing
+        /// Text steht bereit, Einfügen ist blockiert — Watcher schiebt nach.
+        case waiting(String)
         case error(String)
     }
 
@@ -29,9 +31,25 @@ final class DictationController {
     private let minimumDuration: TimeInterval = 0.3
 
     private var context: DictationContext?
+    private var pendingInsert: Task<Void, Never>?
+
+    /// Kurzer Tap statt Halten → Aufnahme läuft freihändig weiter,
+    /// der nächste Tap beendet sie (wie bei Wispr Flow).
+    private var handsFree = false
+    private var suppressNextUp = false
+    private let handsFreeTapThreshold: TimeInterval = 0.4
 
     func hotkeyDown() {
-        guard state == .idle || isErrorState else { return }
+        // Zweiter Tap im Hands-free-Modus beendet die Aufnahme.
+        if state == .recording, handsFree {
+            suppressNextUp = true
+            finishRecording()
+            return
+        }
+        guard canStartRecording else { return }
+        pendingInsert?.cancel()
+        pendingInsert = nil
+        handsFree = false
 
         let context = ContextCapture.capture()
         self.context = context
@@ -58,7 +76,25 @@ final class DictationController {
     }
 
     func hotkeyUp() {
+        if suppressNextUp {
+            suppressNextUp = false
+            return
+        }
+        guard state == .recording else { return }
+
+        // Kurzer Tap → freihändig weiter aufnehmen statt stoppen.
+        let heldDuration = Date().timeIntervalSince(recordingStart ?? Date())
+        if heldDuration < handsFreeTapThreshold {
+            handsFree = true
+            FlowLog.log("Hands-free: Aufnahme läuft weiter — Hotkey erneut tippen zum Stoppen.")
+            return
+        }
+        finishRecording()
+    }
+
+    private func finishRecording() {
         guard state == .recording, let session else { return }
+        handsFree = false
         recorder.stop()
 
         let duration = Date().timeIntervalSince(recordingStart ?? Date())
@@ -77,8 +113,13 @@ final class DictationController {
                 var text = try await withTimeout(seconds: 60) { try await session.finish() }
                 text = await Self.applyCleanup(to: text, context: context)
                 FlowLog.log("Transkript (\(text.count) Zeichen): \(text.prefix(120))")
-                try TextInserter.insert(text)
-                self?.state = .idle
+                StatsStore.shared.record(text: text, duration: duration, appName: context?.appName ?? "Unbekannt")
+                do {
+                    try TextInserter.insert(text)
+                    self?.state = .idle
+                } catch let insertError as TextInserter.InsertError {
+                    self?.beginPendingInsert(text: text, message: insertError.waitingMessage)
+                }
             } catch {
                 NSSound(named: "Basso")?.play()
                 self?.state = .error(error.localizedDescription)
@@ -87,9 +128,37 @@ final class DictationController {
         }
     }
 
-    private var isErrorState: Bool {
-        if case .error = state { return true }
-        return false
+    /// Wartet darauf, dass Secure Input freigegeben wird, und fügt den Text
+    /// dann automatisch ein — solange der Nutzer in derselben App geblieben ist.
+    private func beginPendingInsert(text: String, message: String) {
+        pendingInsert?.cancel()
+        let targetPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        state = .waiting(message)
+        pendingInsert = Task { @MainActor [weak self] in
+            for _ in 0..<240 { // bis zu 2 Minuten, alle 0,5 s
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if Task.isCancelled { return }
+                guard !TextInserter.isSecureInputBlocked() else { continue }
+
+                guard let self else { return }
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid,
+                   (try? TextInserter.insert(text)) != nil {
+                    FlowLog.log("Nachträglich eingefügt — Secure Input wurde freigegeben.")
+                    self.state = .idle
+                } else {
+                    self.state = .error("Secure Input ist frei — Text liegt in der Zwischenablage (⌘V).")
+                }
+                return
+            }
+            self?.state = .error("Weiter blockiert — Text liegt in der Zwischenablage (⌘V).")
+        }
+    }
+
+    private var canStartRecording: Bool {
+        switch state {
+        case .idle, .error, .waiting: return true
+        case .recording, .transcribing: return false
+        }
     }
 
     /// Auto-Edit: Selbstkorrekturen und Füllwörter per LLM auflösen.

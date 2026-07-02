@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = DictationController()
     private let hotkey = HotkeyMonitor()
     private let settingsWindow = SettingsWindowController()
+    private let statsWindow = StatsWindowController()
     private let hud = HudController()
 
     private let stateMenuItem = NSMenuItem(title: "Bereit", action: nil, keyEquivalent: "")
@@ -120,6 +121,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preload.target = self
         menu.addItem(preload)
 
+        let unlockSecureInput = NSMenuItem(
+            title: "Secure Input freigeben (sperrt Bildschirm)",
+            action: #selector(resetSecureInput), keyEquivalent: ""
+        )
+        unlockSecureInput.target = self
+        menu.addItem(unlockSecureInput)
+
+        let stats = NSMenuItem(title: "Statistiken …", action: #selector(openStats), keyEquivalent: "")
+        stats.target = self
+        menu.addItem(stats)
+
         let settings = NSMenuItem(title: "Einstellungen …", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
@@ -142,6 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .transcribing:
             setIcon(named: "ellipsis.circle", description: "Transkribiere")
             stateMenuItem.title = "Transkribiere (\(AppSettings.engine.displayName)) …"
+        case .waiting(let message):
+            setIcon(named: "clock", description: "Wartet")
+            stateMenuItem.title = message
         case .error(let message):
             setIcon(named: "exclamationmark.triangle", description: "Fehler")
             stateMenuItem.title = "Fehler: \(message)"
@@ -156,6 +171,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hud.show(.transcribing)
         case .idle:
             hud.hide()
+        case .waiting(let message):
+            hud.show(.loading(message))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self else { return }
+                if case .waiting = self.controller.state { self.hud.hide() }
+            }
         case .error(let message):
             hud.show(.error(message))
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -201,6 +222,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         settingsWindow.show()
+    }
+
+    @objc private func openStats() {
+        statsWindow.show()
+    }
+
+    /// Verwaiste Secure-Input-Blockaden lassen sich nur über das Login-Fenster
+    /// zurücksetzen — Bildschirm sperren, per Touch ID entsperren, fertig.
+    @objc private func resetSecureInput() {
+        FlowLog.log("Secure-Input-Reset angefordert — sperre Bildschirm.")
+        TextInserter.lockScreen()
     }
 }
 
