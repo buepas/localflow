@@ -32,8 +32,10 @@ open build/LocalFlow.app
 
 ## Benutzung
 
-Hotkey (Standard: **Fn**) gedrückt halten, sprechen, loslassen — der Text landet
-im gerade fokussierten Textfeld. Engine-Wechsel direkt im Menüleisten-Menü.
+Hotkey (Standard: **Fn**) kurz gedrückt halten, sprechen, loslassen — der Text
+landet im gerade fokussierten Textfeld. Ein kurzer Tap und Tastenkombinationen
+wie Fn-F12 bleiben für ihre normale macOS-Funktion reserviert. Engine-Wechsel
+direkt im Menüleisten-Menü.
 
 Beim ersten lokalen Diktat lädt FluidAudio die Parakeet-Modelle (~1 GB) von
 Hugging Face herunter („Lokales Modell vorladen" im Menü stößt das manuell an).
@@ -71,6 +73,18 @@ für die Lokal- und ElevenLabs-Engine als LLM-Nachbearbeitung (Einstellungen →
   Standard-Modell `claude-opus-4-8`; für weniger Latenz `claude-haiku-4-5` eintragen.
 
 Schlägt der Cleanup fehl, wird das rohe Transkript eingefügt (Details im Log).
+
+## Transkript-Archiv
+
+Jedes Diktat wird zusätzlich zu den aggregierten Statistiken (`stats.json`) im
+Volltext archiviert — als eigener Text-Korpus für spätere Auswertung:
+
+- Datei: `~/Library/Application Support/LocalFlow/transcripts.jsonl`
+  (eine JSON-Zeile pro Diktat: Zeitstempel, Text, Roh-Transkript vor Auto-Edit,
+  App, Engine, Dauer, Sprache, Wort-/Zeichenzahl)
+- Menü → „Transkript-Archiv zeigen" öffnet die Datei im Finder
+- Abschaltbar unter Einstellungen → Transkript-Archiv; die Daten bleiben
+  vollständig auf dem Mac
 
 ## Hinweis zu Rebuilds
 

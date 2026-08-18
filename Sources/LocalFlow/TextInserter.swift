@@ -9,6 +9,7 @@ enum TextInserter {
     enum InsertError: LocalizedError {
         case secureInputActive(blocker: String)
         case secureInputStale
+        case noFocusedField
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +17,8 @@ enum TextInserter {
                 return "\(blocker) blockiert Tastatureingaben (Secure Input) — Text liegt in der Zwischenablage, einfach ⌘V drücken."
             case .secureInputStale:
                 return "Secure Input hängt fest (App schon beendet). Bildschirm sperren (⌃⌘Q) + entsperren setzt es zurück — Text liegt in der Zwischenablage."
+            case .noFocusedField:
+                return "Kein Textfeld fokussiert — Text liegt in der Zwischenablage, einfach ⌘V drücken."
             }
         }
 
@@ -26,6 +29,8 @@ enum TextInserter {
                 return "\(blocker) blockiert Tastatureingaben (offenes Passwortfeld?) — füge automatisch ein, sobald frei …"
             case .secureInputStale:
                 return "Secure Input hängt fest — Menü → „Secure Input freigeben\" (oder ⌃⌘Q). Text wird dann eingefügt."
+            case .noFocusedField:
+                return "Kein Textfeld fokussiert — füge automatisch ein, sobald eins fokussiert ist …"
             }
         }
     }
@@ -50,7 +55,13 @@ enum TextInserter {
         unsafeBitCast(symbol, to: LockFunction.self)()
     }
 
-    static func insert(_ text: String) throws {
+    /// `previousClipboard` ist der Zwischenablage-Inhalt von *vor* diesem
+    /// Diktat — bei einem Nachschiebe-Versuch (Secure Input/kein Fokus erst
+    /// später freigegeben) liegt zu dem Zeitpunkt bereits der diktierte Text
+    /// in der Zwischenablage; ohne den von außen mitgegebenen Originalwert
+    /// würde beim erneuten Versuch versehentlich "der diktierte Text" statt
+    /// des echten alten Inhalts wiederhergestellt.
+    static func insert(_ text: String, restoring previousClipboard: String?) throws {
         FlowLog.log("Einfügen in: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "unbekannt")")
 
         // 1) Direkt ins fokussierte Element schreiben (Accessibility-API,
@@ -60,37 +71,56 @@ enum TextInserter {
             return
         }
 
-        let pasteboard = NSPasteboard.general
-        let previous = pasteboard.string(forType: .string)
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        // Ohne fokussiertes Element liefe jeder Tastatur-Weg ins Leere —
+        // Text bliebe nirgends sichtbar UND die Zwischenablage würde nach
+        // 0,4 s trotzdem zurückgesetzt, das Diktat wäre komplett verloren.
+        // Stattdessen: Text in der Zwischenablage lassen, Watcher schiebt
+        // nach, sobald ein Feld fokussiert wird.
+        guard focusedElement() != nil else {
+            FlowLog.log("Einfügen blockiert: kein Textfeld fokussiert.")
+            setClipboard(text)
+            throw InsertError.noFocusedField
+        }
 
-        // 2) ⌘V direkt an den Zielprozess (verifiziert): läuft durch die
-        //    normale Eingabe-Pipeline der App (räumt z. B. Fake-Placeholder
-        //    in Web-Composern korrekt weg) und umgeht den systemweiten
-        //    Secure-Input-Filter.
-        if pasteDirectlyToFrontmostApp() {
-            FlowLog.log("Eingefügt via Direkt-Paste an die Ziel-App.")
-            restoreClipboardLater(pasteboard, previous)
+        setClipboard(text)
+
+        // 2) Den nativen „Einfügen"-Menüpunkt der Ziel-App auslösen. Das ist
+        //    eine Accessibility-Aktion statt eines Tastaturereignisses und
+        //    funktioniert deshalb auch bei systemweit aktivem Secure Input.
+        if pasteViaMenuAction() {
+            FlowLog.log("Eingefügt via nativem Einfügen-Menüpunkt.")
+            restoreClipboardLater(previousClipboard)
             return
         }
 
-        // 3) Klassisches ⌘V über das System — nur möglich, wenn kein
+        // 3) ⌘V direkt an den Zielprozess: läuft durch die
+        //    normale Eingabe-Pipeline der App (räumt z. B. Fake-Placeholder
+        //    in Web-Composern korrekt weg) und umgeht den systemweiten
+        //    Secure-Input-Filter. Wenn das Feld keinen AX-Wert veröffentlicht,
+        //    kann der Versand nicht verifiziert werden; dann gilt ein
+        //    erfolgreich erzeugtes und versandtes Event als Erfolg.
+        if pasteDirectlyToFrontmostApp() {
+            FlowLog.log("Eingefügt via Direkt-Paste an die Ziel-App.")
+            restoreClipboardLater(previousClipboard)
+            return
+        }
+
+        // 4) Klassisches ⌘V über das System — nur möglich, wenn kein
         //    Secure Input aktiv ist.
         if !IsSecureEventInputEnabled() {
             postCommandV()
             FlowLog.log("Eingefügt via ⌘V-Fallback.")
-            restoreClipboardLater(pasteboard, previous)
+            restoreClipboardLater(previousClipboard)
             return
         }
 
-        // 4) Letzter tastaturfreier Versuch: Feldwert direkt setzen
+        // 5) Letzter tastaturfreier Versuch: Feldwert direkt setzen
         //    (Placeholder-bewusst, hängt an bestehenden Text an).
         if insertViaAXValue(text) {
             return
         }
 
-        // 5) Blockiert — Text bleibt in der Zwischenablage, der Watcher
+        // 6) Blockiert — Text bleibt in der Zwischenablage, der Watcher
         //    schiebt nach, sobald Secure Input freigegeben wird.
         let info = secureInputBlockerInfo()
         FlowLog.log("Einfügen blockiert: Secure Input aktiv (\(info.name ?? "unbekannt"), stale=\(info.stale)).")
@@ -100,12 +130,27 @@ enum TextInserter {
         throw InsertError.secureInputActive(blocker: info.name ?? "Eine App")
     }
 
-    private static func restoreClipboardLater(_ pasteboard: NSPasteboard, _ previous: String?) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            if let previous {
-                pasteboard.clearContents()
-                pasteboard.setString(previous, forType: .string)
-            }
+    private static func setClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    /// Setzt die Zwischenablage nach einem erfolgreichen Einfügen auf den
+    /// Stand von *vor* dem Diktat zurück — nur wenn es einen gab.
+    private static func restoreClipboardLater(_ previous: String?) {
+        restoreClipboard(to: previous)
+    }
+
+    /// Öffentlich, damit auch ein manuell erkanntes ⌘V (z. B. während der
+    /// Nutzer selbst noch auf ein Feld wartet) die ursprüngliche
+    /// Zwischenablage zurückholen kann, nicht nur der automatische Pfad.
+    static func restoreClipboard(to previous: String?, after delay: TimeInterval = 0.4) {
+        guard let previous else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(previous, forType: .string)
         }
     }
 
@@ -163,13 +208,19 @@ enum TextInserter {
         return value as? String
     }
 
+    private static func isSecureTextField(_ element: AXUIElement) -> Bool {
+        var subrole: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole) == .success else {
+            return false
+        }
+        return (subrole as? String) == (kAXSecureTextFieldSubrole as String)
+    }
+
     private static func setTextOnFocusedElement(_ text: String) -> Bool {
         guard let element = focusedElement() else { return false }
 
         // Niemals in Passwortfelder diktieren.
-        var role: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
-        if (role as? String) == "AXSecureTextField" { return false }
+        if isSecureTextField(element) { return false }
 
         // 1) An der Cursorposition einfügen (ersetzt die Auswahl).
         //    Chromium meldet hier teils Erfolg, OHNE einzufügen — deshalb
@@ -197,9 +248,7 @@ enum TextInserter {
     private static func insertViaAXValue(_ text: String) -> Bool {
         guard let element = focusedElement() else { return false }
 
-        var role: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
-        if (role as? String) == "AXSecureTextField" { return false }
+        if isSecureTextField(element) { return false }
 
         var valueSettable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &valueSettable) == .success,
@@ -231,13 +280,71 @@ enum TextInserter {
         return true
     }
 
+    /// Löst den normalen ⌘V-Menüpunkt der aktiven App über Accessibility aus.
+    /// Der Shortcut wird über seine semantischen Menü-Attribute gefunden und
+    /// funktioniert daher unabhängig von App und Systemsprache.
+    private static func pasteViaMenuAction() -> Bool {
+        guard let focused = focusedElement(), !isSecureTextField(focused),
+              let app = NSWorkspace.shared.frontmostApplication else { return false }
+
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        var menuBarRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &menuBarRef) == .success,
+              let menuBarRef,
+              CFGetTypeID(menuBarRef) == AXUIElementGetTypeID() else { return false }
+
+        let menuBar = unsafeDowncast(menuBarRef as AnyObject, to: AXUIElement.self)
+        guard let pasteItem = findPlainCommandV(in: menuBar, depth: 0) else { return false }
+        return AXUIElementPerformAction(pasteItem, kAXPressAction as CFString) == .success
+    }
+
+    /// Findet „⌘V" statt eines lokalisierten Titels wie „Paste"/„Einfügen".
+    private static func findPlainCommandV(in element: AXUIElement, depth: Int) -> AXUIElement? {
+        guard depth <= 6 else { return nil }
+
+        var commandRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXMenuItemCmdCharAttribute as CFString, &commandRef) == .success,
+           (commandRef as? String)?.lowercased() == "v" {
+            var modifiersRef: CFTypeRef?
+            let modifiersResult = AXUIElementCopyAttributeValue(
+                element,
+                kAXMenuItemCmdModifiersAttribute as CFString,
+                &modifiersRef
+            )
+            let modifiers = (modifiersRef as? NSNumber)?.uint32Value ?? 0
+
+            var enabledRef: CFTypeRef?
+            let enabledResult = AXUIElementCopyAttributeValue(
+                element,
+                kAXEnabledAttribute as CFString,
+                &enabledRef
+            )
+            let enabled = enabledResult != .success || (enabledRef as? Bool) != false
+
+            // 0 bedeutet Command ohne zusätzliche Shift-/Option-/Control-Taste.
+            if modifiersResult != .success || modifiers == 0, enabled {
+                return element
+            }
+        }
+
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement] else { return nil }
+        for child in children {
+            if let match = findPlainCommandV(in: child, depth: depth + 1) {
+                return match
+            }
+        }
+        return nil
+    }
+
     /// ⌘V direkt an den Prozess der aktiven App posten — umgeht den
-    /// systemweiten Secure-Input-Filter. Erfolg wird über die Änderung des
-    /// Feldinhalts verifiziert; ohne lesbaren Feldinhalt kein Versuch
-    /// (sonst droht doppeltes Einfügen durch den Warte-Watcher).
+    /// systemweiten Secure-Input-Filter. Bei einem lesbaren Feld wird der
+    /// Erfolg verifiziert; ohne veröffentlichten AX-Wert ist das nicht möglich.
     private static func pasteDirectlyToFrontmostApp() -> Bool {
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              let before = focusedElementValue() else { return false }
+        guard let focused = focusedElement(), !isSecureTextField(focused),
+              let app = NSWorkspace.shared.frontmostApplication else { return false }
+        let before = elementValue(focused)
 
         let source = CGEventSource(stateID: .combinedSessionState)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -246,6 +353,11 @@ enum TextInserter {
         keyUp.flags = .maskCommand
         keyDown.postToPid(app.processIdentifier)
         keyUp.postToPid(app.processIdentifier)
+
+        guard let before else {
+            FlowLog.log("Direkt-Paste versandt; Ziel-App veröffentlicht keinen überprüfbaren AX-Wert.")
+            return true
+        }
 
         for _ in 0..<10 {
             usleep(100_000)

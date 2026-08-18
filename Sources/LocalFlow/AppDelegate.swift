@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var axPollTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMainMenu()
         setupStatusItem()
         requestPermissions()
 
@@ -30,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey.onDown = { [weak self] in self?.controller.hotkeyDown() }
         hotkey.onUp = { [weak self] in self?.controller.hotkeyUp() }
+        hotkey.onCancel = { [weak self] in self?.controller.hotkeyCancel() }
+        hotkey.onTrelloChord = { [weak self] in self?.controller.markTrello() }
         startHotkeyWhenTrusted()
         preloadLocalModelIfNeeded()
     }
@@ -91,6 +94,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionsMenuItem.title = "Mikrofon \(mic ? "✓" : "✗") · Bedienungshilfen \(ax ? "✓" : "✗")"
     }
 
+    // MARK: Hauptmenü
+
+    /// Als reine Menüleisten-App (LSUIElement) hat LocalFlow sonst keine
+    /// Menüleiste — ohne "Bearbeiten"-Menü mit Standard-Actions kennt macOS
+    /// ⌘C/⌘V/⌘X/⌘A in keinem Textfeld der App (z. B. Einstellungen). Wird
+    /// beim Fokus eines Fensters automatisch eingeblendet.
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+        appMenu.addItem(withTitle: "LocalFlow beenden", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Bearbeiten")
+        editMenuItem.submenu = editMenu
+        editMenu.addItem(withTitle: "Rückgängig", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Wiederholen", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Ausschneiden", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Kopieren", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Einfügen", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Alles auswählen", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        NSApp.mainMenu = mainMenu
+    }
+
     // MARK: Menüleiste
 
     private func setupStatusItem() {
@@ -132,6 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stats.target = self
         menu.addItem(stats)
 
+        let transcripts = NSMenuItem(title: "Transkript-Archiv zeigen", action: #selector(revealTranscripts), keyEquivalent: "")
+        transcripts.target = self
+        menu.addItem(transcripts)
+
         let settings = NSMenuItem(title: "Einstellungen …", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
@@ -157,6 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .waiting(let message):
             setIcon(named: "clock", description: "Wartet")
             stateMenuItem.title = message
+        case .success(let message):
+            setIcon(named: "checkmark.circle", description: "Erledigt")
+            stateMenuItem.title = message
         case .error(let message):
             setIcon(named: "exclamationmark.triangle", description: "Fehler")
             stateMenuItem.title = "Fehler: \(message)"
@@ -177,6 +218,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if case .waiting = self.controller.state { self.hud.hide() }
             }
+        case .success(let message):
+            hud.show(.success(message))
         case .error(let message):
             hud.show(.error(message))
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -226,6 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openStats() {
         statsWindow.show()
+    }
+
+    @objc private func revealTranscripts() {
+        NSWorkspace.shared.activateFileViewerSelecting([TranscriptStore.fileURL])
     }
 
     /// Verwaiste Secure-Input-Blockaden lassen sich nur über das Login-Fenster

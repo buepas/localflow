@@ -18,8 +18,17 @@ struct SettingsView: View {
     @AppStorage("elevenLabsApiKey") private var elevenLabsApiKey = ""
     @AppStorage("elevenLabsRemoveFillers") private var removeFillers = true
     @AppStorage("cleanupMode") private var cleanupMode = CleanupMode.off.rawValue
+    @AppStorage("saveTranscripts") private var saveTranscripts = true
     @AppStorage("anthropicApiKey") private var anthropicApiKey = ""
     @AppStorage("claudeModel") private var claudeModel = "claude-opus-4-8"
+    @AppStorage("trelloApiKey") private var trelloApiKey = ""
+    @AppStorage("trelloToken") private var trelloToken = ""
+    @AppStorage("trelloListId") private var trelloListId = ""
+    @AppStorage("trelloListName") private var trelloListName = ""
+    @AppStorage("trelloCodewords") private var trelloCodewords = "todo, trello"
+    @AppStorage("trelloSmartSplit") private var trelloSmartSplit = true
+    @State private var trelloLists: [TrelloList] = []
+    @State private var trelloStatus = ""
 
     var body: some View {
         Form {
@@ -79,9 +88,63 @@ struct SettingsView: View {
                         .help("Standard: claude-opus-4-8 — für weniger Latenz z. B. claude-haiku-4-5")
                 }
             }
+
+            Section("Trello-Todos") {
+                SecureField("API-Key", text: $trelloApiKey)
+                SecureField("Token", text: $trelloToken)
+                Text("Key unter trello.com/power-ups/admin erstellen (Power-Up anlegen → API-Key), Token über den \"Token\"-Link daneben generieren.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Boards & Listen laden") { loadTrelloLists() }
+                    Text(trelloStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !trelloLists.isEmpty {
+                    Picker("Ziel-Liste", selection: $trelloListId) {
+                        Text("Bitte wählen").tag("")
+                        ForEach(trelloLists) { list in
+                            Text("\(list.boardName) → \(list.name)").tag(list.id)
+                        }
+                    }
+                    .onChange(of: trelloListId) { _, newValue in
+                        if let list = trelloLists.first(where: { $0.id == newValue }) {
+                            trelloListName = "\(list.boardName) → \(list.name)"
+                        }
+                    }
+                } else if !trelloListName.isEmpty {
+                    LabeledContent("Ziel-Liste", value: trelloListName)
+                }
+                TextField("Codewörter (kommagetrennt)", text: $trelloCodewords)
+                    .help("Beginnt ein Diktat mit einem dieser Wörter, wird daraus eine Trello-Karte — z. B. \"Todo Angebot für Müller nachfassen\". Erkennung ist tolerant gegen Tippfehler der Engine.")
+                Toggle("Titel + Beschreibung per Apple Intelligence", isOn: $trelloSmartSplit)
+                Text("Codeword am Diktat-Anfang oder Hotkey+Ctrl halten → Karte landet oben in der Ziel-Liste statt als Text im aktiven Fenster.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Transkript-Archiv") {
+                Toggle("Diktate im Volltext lokal speichern", isOn: $saveTranscripts)
+                Text("Jedes Diktat wird als JSON-Zeile an transcripts.jsonl im Application-Support-Ordner angehängt (Text, Roh-Transkript, App, Engine, Dauer). Bleibt komplett auf diesem Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 620)
+        .frame(width: 460, height: 680)
+    }
+
+    private func loadTrelloLists() {
+        trelloStatus = "Lade …"
+        Task { @MainActor in
+            do {
+                trelloLists = try await TrelloClient.fetchLists()
+                trelloStatus = "\(trelloLists.count) Listen geladen"
+            } catch {
+                trelloStatus = error.localizedDescription
+            }
+        }
     }
 }
 

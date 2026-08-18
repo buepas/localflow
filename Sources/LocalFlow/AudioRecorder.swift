@@ -115,7 +115,11 @@ final class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegat
             FlowLog.log("Erstes Audio-Paket nach \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms.")
         }
         peakLevel = max(peakLevel, rms)
-        onPacket?(packet, min(1.0, rms * 4)) // grob auf 0…1 skaliert
+        // dB-Skala statt linear: normale Sprechlautstärke (RMS ~0.02–0.2)
+        // ergäbe linear kaum Ausschlag. -50 dB … -8 dB → 0 … 1.
+        let db = 20 * log10(max(rms, 0.000_01))
+        let level = max(0, min(1, (db + 50) / 42))
+        onPacket?(packet, level)
     }
 
     // MARK: Gerätewahl

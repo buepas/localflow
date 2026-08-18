@@ -95,6 +95,13 @@ struct AppSettings {
         set { defaults.set(newValue, forKey: "elevenLabsRemoveFillers") }
     }
 
+    /// Diktate im Volltext lokal archivieren (transcripts.jsonl) —
+    /// eigener Text-Korpus für spätere Auswertung.
+    static var saveTranscripts: Bool {
+        get { defaults.object(forKey: "saveTranscripts") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "saveTranscripts") }
+    }
+
     /// Auto-Edit-Nachbearbeitung für Engines mit rohem Transkript
     /// (lokal, ElevenLabs). Die Wispr-API bereinigt bereits serverseitig.
     static var cleanupMode: CleanupMode {
@@ -105,6 +112,47 @@ struct AppSettings {
     static var anthropicApiKey: String {
         get { defaults.string(forKey: "anthropicApiKey") ?? "" }
         set { defaults.set(newValue, forKey: "anthropicApiKey") }
+    }
+
+    // MARK: Trello-Todos
+
+    static var trelloApiKey: String {
+        get { defaults.string(forKey: "trelloApiKey") ?? "" }
+        set { defaults.set(newValue, forKey: "trelloApiKey") }
+    }
+
+    static var trelloToken: String {
+        get { defaults.string(forKey: "trelloToken") ?? "" }
+        set { defaults.set(newValue, forKey: "trelloToken") }
+    }
+
+    static var trelloListId: String {
+        get { defaults.string(forKey: "trelloListId") ?? "" }
+        set { defaults.set(newValue, forKey: "trelloListId") }
+    }
+
+    /// Anzeigename der gewählten Liste ("Board → Liste") — nur fürs UI.
+    static var trelloListName: String {
+        get { defaults.string(forKey: "trelloListName") ?? "" }
+        set { defaults.set(newValue, forKey: "trelloListName") }
+    }
+
+    /// Kommagetrennte Codewörter am Diktat-Anfang, die das Diktat als
+    /// Trello-Karte statt als Texteinfügung enden lassen.
+    static var trelloCodewords: String {
+        get { defaults.string(forKey: "trelloCodewords") ?? "todo, trello" }
+        set { defaults.set(newValue, forKey: "trelloCodewords") }
+    }
+
+    static var trelloCodewordList: [String] {
+        trelloCodewords.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// Titel + Beschreibung on-device per Apple Intelligence erzeugen;
+    /// aus = Transkript 1:1 als Kartentitel.
+    static var trelloSmartSplit: Bool {
+        get { defaults.object(forKey: "trelloSmartSplit") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "trelloSmartSplit") }
     }
 
     static var claudeModel: String {

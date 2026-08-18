@@ -9,6 +9,7 @@ final class HudController {
         case recording
         case transcribing
         case loading(String)
+        case success(String)
         case error(String)
     }
 
@@ -57,7 +58,13 @@ final class HudController {
     }
 
     private func position(_ panel: NSPanel) {
-        guard let screen = NSScreen.main else { return }
+        // Auf dem Bildschirm anzeigen, an dem gearbeitet wird (Mausposition) —
+        // NSScreen.main wäre bei Mehrschirm-Setups immer der Hauptbildschirm.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
         let frame = screen.visibleFrame
         panel.setFrameOrigin(NSPoint(
             x: frame.midX - panel.frame.width / 2,
@@ -102,6 +109,13 @@ struct HudView: View {
                 Text(message)
                     .foregroundStyle(.white)
                     .lineLimit(1)
+            case .success(let message):
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(message)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .frame(maxWidth: 360)
             case .error(let message):
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.yellow)
