@@ -88,13 +88,16 @@ Volltext archiviert — als eigener Text-Korpus für spätere Auswertung:
 
 ## Hinweis zu Rebuilds
 
-Die App ist ad-hoc-signiert. Nach jedem `./build.sh` muss die
-Bedienungshilfen-Freigabe erneuert werden — zuverlässig per:
+Damit die Freigaben (Mikrofon, Bedienungshilfen) Rebuilds überleben, signiert
+`build.sh` mit dem lokalen Zertifikat „LocalFlow Signing". Einmalig anlegen:
 
 ```bash
-tccutil reset Accessibility ai.evalent.localflow
-open build/LocalFlow.app   # dann in den Systemeinstellungen neu erteilen
+./scripts/make_signing_cert.sh
 ```
+
+Fehlt das Zertifikat, fällt `build.sh` auf eine Ad-hoc-Signatur zurück — dann
+verwirft macOS die Freigaben nach jedem Build (der Hash des Binaries ändert
+sich, und TCC sieht eine „fremde" App).
 
 ## Bekannte MVP-Grenzen (v2-Kandidaten)
 
